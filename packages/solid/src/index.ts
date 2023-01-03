@@ -15,6 +15,7 @@ export {
   createRoot,
   createSelector,
   createSignal,
+  debugValue,
   enableExternalSource,
   enableScheduling,
   equalFn,

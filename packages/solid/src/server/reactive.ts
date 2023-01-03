@@ -325,4 +325,6 @@ export function from<T>(
   return s;
 }
 
+export function debugValue(value: unknown, name?: string): void {}
+
 export function enableExternalSource(factory: any) {}

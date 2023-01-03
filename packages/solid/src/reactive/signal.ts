@@ -1719,4 +1719,17 @@ function serializeChildren(root: Owner): GraphRecord {
   return result;
 }
 
+/**
+ * This function is used to add a custom value to the debugged graph.
+ * It is not intended to be used in production, and won't have any effect there.
+ *
+ * It will attach the value to the current owner under the name provided, or "debugValue" if none is provided.
+ *
+ * @param value The value to attach to the graph
+ * @param name The name to attach the value under
+ */
+export function debugValue(value: unknown, name?: string): void {
+  "_SOLID_DEV_" && registerGraph(name ?? "debugValue", { value });
+}
+
 type TODO = any;
