@@ -53,6 +53,31 @@ let Updates: Computation<any>[] | null = null;
 let Effects: Computation<any>[] | null = null;
 let ExecCount = 0;
 
+const OWNER_TYPE_ROOT = "ROOT";
+const OWNER_TYPE_MEMO = "MEMO";
+const OWNER_TYPE_EFFECT = "EFFECT";
+const OWNER_TYPE_RENDER_EFFECT = "RENDER_EFFECT";
+const OWNER_TYPE_COMPUTED = "COMPUTED";
+const OWNER_TYPE_SELECTOR = "SELECTOR";
+const OWNER_TYPE_DEFERRED = "DEFERRED";
+const OWNER_TYPE_REACTION = "REACTION";
+const OWNER_TYPE_COMPONENT = "COMPONENT";
+const OWNER_TYPE_CONTEXT = "CONTEXT";
+const OWNER_TYPE_CATCH_ERROR = "CATCH_ERROR";
+
+export type OwnerType =
+  | typeof OWNER_TYPE_ROOT
+  | typeof OWNER_TYPE_MEMO
+  | typeof OWNER_TYPE_EFFECT
+  | typeof OWNER_TYPE_RENDER_EFFECT
+  | typeof OWNER_TYPE_COMPUTED
+  | typeof OWNER_TYPE_SELECTOR
+  | typeof OWNER_TYPE_DEFERRED
+  | typeof OWNER_TYPE_REACTION
+  | typeof OWNER_TYPE_COMPONENT
+  | typeof OWNER_TYPE_CONTEXT
+  | typeof OWNER_TYPE_CATCH_ERROR;
+
 /** Object storing callbacks for debugging during development */
 export const DevHooks: {
   afterUpdate: (() => void) | null;
@@ -88,6 +113,7 @@ export interface Owner {
   context: any | null;
   sourceMap?: SourceMapValue[];
   name?: string;
+  type?: OwnerType;
 }
 
 export interface Computation<Init, Next extends Init = Init> extends Owner {
@@ -160,7 +186,10 @@ export function createRoot<T>(fn: RootFunction<T>, detachedOwner?: typeof Owner)
         : fn
       : () => fn(() => untrack(() => cleanNode(root)));
 
-  if ("_SOLID_DEV_") DevHooks.afterCreateOwner && DevHooks.afterCreateOwner(root);
+  if ("_SOLID_DEV_") {
+    root.type = OWNER_TYPE_ROOT;
+    DevHooks.afterCreateOwner && DevHooks.afterCreateOwner(root);
+  }
 
   Owner = root;
   Listener = null;
@@ -284,6 +313,7 @@ export function createComputed<Next, Init>(
   value?: Init,
   options?: EffectOptions
 ): void {
+  devSetNextOwnerType(OWNER_TYPE_COMPUTED);
   const c = createComputation(fn, value!, true, STALE, "_SOLID_DEV_" ? options : undefined);
   if (Scheduler && Transition && Transition.running) Updates!.push(c);
   else updateComputation(c);
@@ -315,6 +345,7 @@ export function createRenderEffect<Next, Init>(
   value?: Init,
   options?: EffectOptions
 ): void {
+  devSetNextOwnerType(OWNER_TYPE_RENDER_EFFECT);
   const c = createComputation(fn, value!, false, STALE, "_SOLID_DEV_" ? options : undefined);
   if (Scheduler && Transition && Transition.running) Updates!.push(c);
   else updateComputation(c);
@@ -347,6 +378,7 @@ export function createEffect<Next, Init>(
   options?: EffectOptions & { render?: boolean }
 ): void {
   runEffects = runUserEffects;
+  devSetNextOwnerType(OWNER_TYPE_EFFECT);
   const c = createComputation(fn, value!, false, STALE, "_SOLID_DEV_" ? options : undefined),
     s = SuspenseContext && useContext(SuspenseContext);
   if (s) c.suspense = s;
@@ -369,6 +401,8 @@ export function createEffect<Next, Init>(
  */
 export function createReaction(onInvalidate: () => void, options?: EffectOptions) {
   let fn: (() => void) | undefined;
+
+  devSetNextOwnerType(OWNER_TYPE_REACTION);
   const c = createComputation(
       () => {
         fn ? fn() : untrack(onInvalidate);
@@ -382,6 +416,7 @@ export function createReaction(onInvalidate: () => void, options?: EffectOptions
     s = SuspenseContext && useContext(SuspenseContext);
   if (s) c.suspense = s;
   c.user = true;
+
   return (tracking: () => void) => {
     fn = tracking;
     updateComputation(c);
@@ -430,6 +465,7 @@ export function createMemo<Next extends Prev, Init, Prev>(
 ): Accessor<Next> {
   options = options ? Object.assign({}, signalOptions, options) : signalOptions;
 
+  devSetNextOwnerType(OWNER_TYPE_MEMO);
   const c: Partial<Memo<Init, Next>> = createComputation(
     fn,
     value!,
@@ -754,6 +790,8 @@ export interface DeferredOptions<T> {
 export function createDeferred<T>(source: Accessor<T>, options?: DeferredOptions<T>) {
   let t: Task,
     timeout = options ? options.timeoutMs : undefined;
+
+  devSetNextOwnerType(OWNER_TYPE_DEFERRED);
   const node = createComputation(
     () => {
       if (!t || !t.fn)
@@ -766,6 +804,7 @@ export function createDeferred<T>(source: Accessor<T>, options?: DeferredOptions
     undefined,
     true
   ) as Memo<any>;
+
   const [deferred, setDeferred] = createSignal(
     Transition && Transition.running && Transition.sources.has(node) ? node.tValue : node.value,
     options
@@ -809,6 +848,7 @@ export function createSelector<T, U = T>(
   options?: BaseOptions
 ): (key: U) => boolean {
   const subs = new Map<U, Set<Computation<any>>>();
+  devSetNextOwnerType(OWNER_TYPE_SELECTOR);
   const node = createComputation(
     (p: T | undefined) => {
       const v = source();
@@ -995,6 +1035,7 @@ export function onCleanup<T extends () => any>(fn: T): T {
  */
 export function catchError<T>(fn: () => T, handler: (err: Error) => void) {
   ERROR || (ERROR = Symbol("error"));
+  devSetNextOwnerType(OWNER_TYPE_CATCH_ERROR);
   Owner = createComputation(undefined!, undefined, true);
   Owner.context = { ...Owner.context, [ERROR]: [handler] };
   if (Transition && Transition.running) Transition.sources.add(Owner as Memo<any>);
@@ -1101,6 +1142,7 @@ export interface DevComponent<T> extends Memo<unknown> {
 
 // Dev
 export function devComponent<P, V>(Comp: (props: P) => V, props: P): V {
+  devSetNextOwnerType(OWNER_TYPE_COMPONENT);
   const c = createComputation(
     () =>
       untrack(() => {
@@ -1381,6 +1423,13 @@ function runComputation(node: Computation<any>, value: any, time: number) {
   }
 }
 
+let dev_next_owner_type: OwnerType | undefined;
+function devSetNextOwnerType(type: OwnerType): void {
+  if ("_SOLID_DEV_" && dev_next_owner_type === undefined) {
+    dev_next_owner_type = type;
+  }
+}
+
 function createComputation<Next, Init = unknown>(
   fn: EffectFunction<Init | Next, Next>,
   init: Init,
@@ -1422,7 +1471,12 @@ function createComputation<Next, Init = unknown>(
     }
   }
 
-  if ("_SOLID_DEV_" && options && options.name) c.name = options.name;
+  if ("_SOLID_DEV_") {
+    if (options && options.name) c.name = options.name;
+    c.type = dev_next_owner_type;
+    dev_next_owner_type = undefined;
+    DevHooks.afterCreateOwner && DevHooks.afterCreateOwner(c);
+  }
 
   if (ExternalSourceFactory) {
     const [track, trigger] = createSignal<void>(undefined, { equals: false });
@@ -1436,8 +1490,6 @@ function createComputation<Next, Init = unknown>(
       return Transition && Transition.running ? inTransition.track(x) : ordinary.track(x);
     };
   }
-
-  if ("_SOLID_DEV_") DevHooks.afterCreateOwner && DevHooks.afterCreateOwner(c);
 
   return c;
 }
@@ -1713,6 +1765,7 @@ function resolveChildren(children: JSX.Element | Accessor<any>): ResolvedChildre
 function createProvider(id: symbol, options?: EffectOptions) {
   return function provider(props: FlowProps<{ value: unknown }>) {
     let res;
+    devSetNextOwnerType(OWNER_TYPE_CONTEXT);
     createRenderEffect(
       () =>
         (res = untrack(() => {
