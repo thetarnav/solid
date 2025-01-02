@@ -233,8 +233,10 @@ export function createSignal<T>(
 
   if ("_SOLID_DEV_") {
     if (options.name) s.name = options.name;
-    if (DevHooks.afterCreateSignal) DevHooks.afterCreateSignal(s);
-    if (!options.internal) registerGraph(s);
+    if (!options.internal) {
+      registerGraph(s);
+      if (DevHooks.afterCreateSignal) DevHooks.afterCreateSignal(s);
+    }
   }
 
   const setter: Setter<T | undefined> = (value?: unknown) => {
